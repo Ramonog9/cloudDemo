@@ -1,0 +1,53 @@
+name: Kubernetes Deployment Test
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+jobs:
+  minikube-test:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v3
+
+    # Install Minikube & kubectl
+    - name: Install Minikube and kubectl
+      run: |
+        curl -Lo minikube https://storage.googleapis.com/minikube/releases/latest/minikube-linux-amd64
+        sudo install minikube /usr/local/bin/
+        curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
+        sudo install kubectl /usr/local/bin/
+
+    # Start Minikube
+    - name: Start Minikube
+      run: |
+        sudo minikube start --driver=docker --wait=all
+        kubectl version --client
+        kubectl get nodes
+
+    # Build and load Docker image into Minikube
+    - name: Build Docker image inside Minikube
+      run: |
+        eval $(minikube docker-env)
+        docker build -t cloud-demo:local .
+
+    # Deploy Kubernetes manifests
+    - name: Deploy app to Minikube
+      run: |
+        kubectl apply -f namespace.yaml
+        kubectl apply -f deployment.yaml
+        kubectl apply -f service.yaml
+        kubectl rollout status deployment/cloud-demo -n cloud-demo
+
+    # Test app availability
+    - name: Test service
+      run: |
+        kubectl wait --for=condition=available deployment/cloud-demo -n cloud-demo --timeout=120s
+        POD_NAME=$(kubectl get pod -n cloud-demo -l app=cloud-demo -o jsonpath="{.items[0].metadata.name}")
+        kubectl port-forward -n cloud-demo pod/$POD_NAME 8080:80 &
+        sleep 5
+        curl -f http://localhost:8080 || (echo "App not responding!" && exit 1)
