@@ -1,4 +1,4 @@
-name: Kubernetes Deployment Test
+name: Kubernetes Deployment Test (kind)
 
 on:
   push:
@@ -7,51 +7,39 @@ on:
     branches: [ "main" ]
 
 jobs:
-  minikube-test:
+  kind-test:
     runs-on: ubuntu-latest
 
     steps:
     - name: Checkout code
       uses: actions/checkout@v3
 
-    # Install dependencies Minikube needs
-    - name: Install dependencies
-      run: |
-        sudo apt-get update -y
-        sudo apt-get install -y conntrack socat
+    # Create kind cluster
+    - name: Create kind cluster
+      uses: helm/kind-action@v1.8.0
+      with:
+        version: v0.22.0
+        node_image: kindest/node:v1.29.0
 
-    # Install Minikube and kubectl
-    - name: Install Minikube and kubectl
+    # Build Docker image and load into kind
+    - name: Build Docker image
       run: |
-        curl -Lo minikube https://storage.googleapis.com/minikube/releases/latest/minikube-linux-amd64
-        sudo install minikube /usr/local/bin/
-        curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
-        sudo install kubectl /usr/local/bin/
-
-    # Start Minikube in none-driver mode
-    - name: Start Minikube
-      run: |
-        sudo minikube start --driver=none --kubernetes-version=v1.29.0 --wait=all
-        kubectl cluster-info
-        kubectl get nodes
-
-    # Build Docker image inside Minikube environment
-    - name: Build Docker image inside Minikube
-      run: |
-        eval $(minikube docker-env)
         docker build -t cloud-demo:local .
+        kind load docker-image cloud-demo:local
 
-    # Deploy manifests
-    - name: Deploy app to Minikube
+    # Deploy Kubernetes manifests
+    - name: Deploy app
       run: |
         kubectl apply -f namespace.yaml
         kubectl apply -f deployment.yaml
         kubectl apply -f service.yaml
         kubectl rollout status deployment/cloud-demo -n cloud-demo
 
-    # Test service via NodePort
+    # Test service
     - name: Test service
       run: |
         kubectl wait --for=condition=available deployment/cloud-demo -n cloud-demo --timeout=120s
-        NODE_IP=$(minikube ip)
-        curl -v http://$NODE_IP:30080
+        POD_NAME=$(kubectl get pod -n cloud-demo -l app=cloud-demo -o jsonpath="{.items[0].metadata.name}")
+        kubectl port-forward -n cloud-demo pod/$POD_NAME 8080:80 > port-forward.log 2>&1 &
+        sleep 10
+        curl -v http://127.0.0.1:8080
