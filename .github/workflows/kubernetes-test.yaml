@@ -14,18 +14,28 @@ jobs:
     - name: Checkout code
       uses: actions/checkout@v3
 
-    # Create kind cluster
-    - name: Create kind cluster
-      uses: helm/kind-action@v1.8.0
-      with:
-        version: v0.22.0
-        node_image: kindest/node:v1.29.0
+    # Install kind + kubectl manually (more reliable than action wrapper)
+    - name: Install kind and kubectl
+      run: |
+        curl -Lo ./kind https://kind.sigs.k8s.io/dl/v0.22.0/kind-linux-amd64
+        chmod +x ./kind
+        sudo mv ./kind /usr/local/bin/kind
+        curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
+        chmod +x kubectl
+        sudo mv kubectl /usr/local/bin/
 
-    # Build Docker image and load into kind
+    # Create the kind cluster
+    - name: Create kind cluster
+      run: |
+        kind create cluster --name cloud-demo --image kindest/node:v1.29.0
+        kubectl cluster-info
+        kubectl get nodes
+
+    # Build Docker image and load it into kind
     - name: Build Docker image
       run: |
         docker build -t cloud-demo:local .
-        kind load docker-image cloud-demo:local
+        kind load docker-image cloud-demo:local --name cloud-demo
 
     # Deploy Kubernetes manifests
     - name: Deploy app
@@ -43,3 +53,11 @@ jobs:
         kubectl port-forward -n cloud-demo pod/$POD_NAME 8080:80 > port-forward.log 2>&1 &
         sleep 10
         curl -v http://127.0.0.1:8080
+
+    # Debug if something fails
+    - name: Debug logs
+      if: failure()
+      run: |
+        kubectl get pods -A
+        kubectl describe pods -n cloud-demo
+        kubectl logs -n cloud-demo -l app=cloud-demo || true
