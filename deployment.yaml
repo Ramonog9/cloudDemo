@@ -2,6 +2,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: cloud-demo
+  namespace: cloud-demo
   labels:
     app: cloud-demo
 spec:
